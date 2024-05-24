@@ -1,6 +1,7 @@
-// import { Readable } from "stream"
-import { Status, Beatmap } from "./types"
-
+import { Readable } from "stream"
+import { Status, Beatmap, BeatmapSet } from "./types"
+import { createWriteStream } from "fs"
+import { unlink } from "fs/promises"
 export type Server =
     | "Automatic"
     | "Europe"
@@ -45,10 +46,18 @@ export default class Direct {
     url: string
     v1: v1API
     v2: v2API
+    quota: {
+        download: number,
+        osu: number
+    }
     constructor(server: Server, url?: string) {
         this.url = this.getHost(server, url)
         this.v1 = new v1API(this)
         this.v2 = new v2API(this)
+        this.quota = {
+            download: 1,
+            osu: 1
+        }
     }
 
     private getHost(server: Server, url?: string) {
@@ -71,12 +80,31 @@ export default class Direct {
         }
         return (await response.json()) as Status
     }
-    async download(id: number | string, novideo: Boolean = true) {
-        const response = await this.fetch(`/d/${id}`)
-        if (!response.ok) {
-            throw new Error("Server responded with " + response.status)
-        }
-        return response.body
+    download(id: number | string, novideo: Boolean = false, path?: string): Promise<{ finished: Boolean, code?: number }> {
+        return new Promise(async (resolve) => {
+            const result: { finished: Boolean, code?: number } = { finished: false }
+            if(this.quota.download == 0){
+                result.code = 429
+                return resolve(result)
+            }
+            const param = novideo ? id + "n" : id
+            const response = await this.fetch(`/d/${param}`)
+            if (!response.ok) {
+                result.code = response.status
+                return resolve(result);
+            }
+            const writeStream = createWriteStream(path || `./${param}.osz`)
+            const readStream = Readable.from(response.body as any)
+            readStream.on("error", () => {
+                writeStream.destroy()
+                unlink(path || `./${param}.osz`)
+            })
+            readStream.on("close", () => {
+                if(!readStream.readableEnded) return;
+                return resolve({ finished: true})
+            })
+            readStream.pipe(writeStream)
+        })
     }
 }
 
@@ -97,8 +125,6 @@ class v2API {
     async search({ query, limit, offset, ranked, mode, sort }: SearchParams = {}) {
         const response = await this.base.fetch(`/api/v2/search`)
         if (!response.ok) throw new Error("Server responded with " + response.status)
-        return (await response.json()) as Beatmap[]
+        return (await response.json()) as BeatmapSet[]
     }
 }
-
-const client = new Direct("Automatic")

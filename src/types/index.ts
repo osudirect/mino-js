@@ -1,2 +1,3 @@
-export * from "./Beatmap"
-export * from "./Status"
+export * from './Beatmap';
+export * from './BeatmapSet';
+export * from './Status';
